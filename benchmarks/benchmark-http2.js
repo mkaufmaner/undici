@@ -1,6 +1,6 @@
 'use strict'
 
-const http = require('http')
+const https = require('https')
 const os = require('os')
 const path = require('path')
 const { table } = require('table')
@@ -21,14 +21,14 @@ const dest = {}
 
 if (process.env.PORT) {
   dest.port = process.env.PORT
-  dest.url = `http://localhost:${process.env.PORT}`
+  dest.url = `https://localhost:${process.env.PORT}`
 } else {
-  dest.url = 'http://localhost'
+  dest.url = 'https://localhost'
   dest.socketPath = path.join(os.tmpdir(), 'undici.sock')
 }
 
 const httpBaseOptions = {
-  protocol: 'http:',
+  protocol: 'https:',
   hostname: 'localhost',
   method: 'GET',
   path: '/',
@@ -45,17 +45,19 @@ const httpBaseOptions = {
 
 const httpNoKeepAliveOptions = {
   ...httpBaseOptions,
-  agent: new http.Agent({
+  agent: new https.Agent({
     keepAlive: false,
-    maxSockets: connections
+    maxSockets: connections,
+    rejectUnauthorized: false
   })
 }
 
 const httpKeepAliveOptions = {
   ...httpBaseOptions,
-  agent: new http.Agent({
+  agent: new https.Agent({
     keepAlive: true,
-    maxSockets: connections
+    maxSockets: connections,
+    rejectUnauthorized: false
   })
 }
 
@@ -70,6 +72,9 @@ const Class = connections > 1 ? Pool : Client
 const dispatcher = new Class(httpBaseOptions.url, {
   pipelining,
   connections,
+  connect: {
+    rejectUnauthorized: false
+  },
   ...dest
 })
 
@@ -179,36 +184,36 @@ function printResults(results) {
 }
 
 const experiments = {
-  'http - no keepalive'() {
-    return makeParallelRequests(resolve => {
-      http.get(httpNoKeepAliveOptions, res => {
-        res
-          .pipe(
-            new Writable({
-              write(chunk, encoding, callback) {
-                callback()
-              }
-            })
-          )
-          .on('finish', resolve)
-      })
-    })
-  },
-  'http - keepalive'() {
-    return makeParallelRequests(resolve => {
-      http.get(httpKeepAliveOptions, res => {
-        res
-          .pipe(
-            new Writable({
-              write(chunk, encoding, callback) {
-                callback()
-              }
-            })
-          )
-          .on('finish', resolve)
-      })
-    })
-  },
+  // 'https - no keepalive'() {
+  //   return makeParallelRequests(resolve => {
+  //     https.get(httpNoKeepAliveOptions, res => {
+  //       res
+  //         .pipe(
+  //           new Writable({
+  //             write(chunk, encoding, callback) {
+  //               callback()
+  //             }
+  //           })
+  //         )
+  //         .on('finish', resolve)
+  //     })
+  //   })
+  // },
+  // 'https - keepalive'() {
+  //   return makeParallelRequests(resolve => {
+  //     https.get(httpKeepAliveOptions, res => {
+  //       res
+  //         .pipe(
+  //           new Writable({
+  //             write(chunk, encoding, callback) {
+  //               callback()
+  //             }
+  //           })
+  //         )
+  //         .on('finish', resolve)
+  //     })
+  //   })
+  // },
   'undici - pipeline'() {
     return makeParallelRequests(resolve => {
       dispatcher
@@ -265,7 +270,7 @@ if (process.env.PORT) {
   // fetch does not support the socket
   experiments['undici - fetch'] = () => {
     return makeParallelRequests(resolve => {
-      fetch(dest.url).then(res => {
+      fetch(dest.url, {}).then(res => {
         res.body.pipeTo(new WritableStream({ write() { }, close() { resolve() } }))
       }).catch(console.log)
     })
