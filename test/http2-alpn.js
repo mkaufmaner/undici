@@ -28,30 +28,20 @@ test('Should upgrade to HTTP/2 when HTTPS/1 is available', async (t) => {
       allowHTTP1: true
     },
     (req, res) => {
-      if (req.httpVersion === '2.0') {
-        // ignore http/2 requests since these will be handled by the stream handler
-        return
-      }
+      const { socket: { alpnProtocol } } = req.httpVersion === '2.0' ? req.stream.session : req
 
       // handle http/1 requests
       res.writeHead(200, {
-        'content-type': 'text/plain; charset=utf-8',
+        'content-type': 'application/json; charset=utf-8',
         'x-custom-request-header': req.headers['x-custom-request-header'] || '',
-        'x-custom-response-header': 'using http/1'
+        'x-custom-response-header': `using ${req.httpVersion}`
       })
-      res.end('hello http/1')
+      res.end(JSON.stringify({
+        alpnProtocol,
+        httpVersion: req.httpVersion
+      }))
     }
   )
-
-  server.on('stream', (stream, headers) => {
-    stream.respond({
-      ':status': 200,
-      'content-type': 'text/plain; charset=utf-8',
-      'x-custom-request-header': headers['x-custom-request-header'] || '',
-      'x-custom-response-header': 'using http/2'
-    })
-    stream.end('hello http/2')
-  })
 
   server.listen(0)
   await once(server, 'listening')
@@ -78,7 +68,7 @@ test('Should upgrade to HTTP/2 when HTTPS/1 is available', async (t) => {
     path: '/',
     method: 'GET',
     headers: {
-      'x-custom-request-header': 'want http/2'
+      'x-custom-request-header': 'want 2.0'
     }
   })
 
@@ -89,16 +79,18 @@ test('Should upgrade to HTTP/2 when HTTPS/1 is available', async (t) => {
   await once(response.body, 'end')
 
   t.equal(response.statusCode, 200)
-  t.equal(response.headers['content-type'], 'text/plain; charset=utf-8')
-  t.equal(response.headers['x-custom-request-header'], 'want http/2')
-  // only http/2 streams will return this header
-  t.equal(response.headers['x-custom-response-header'], 'using http/2')
-  t.equal(Buffer.concat(body).toString('utf8'), 'hello http/2')
+  t.equal(response.headers['content-type'], 'application/json; charset=utf-8')
+  t.equal(response.headers['x-custom-request-header'], 'want 2.0')
+  t.equal(response.headers['x-custom-response-header'], 'using 2.0')
+  t.equal(Buffer.concat(body).toString('utf8'), JSON.stringify({
+    alpnProtocol: 'h2',
+    httpVersion: '2.0'
+  }))
 
   // make an https request for http/1 to confirm undici is using http/2
   const httpsOptions = {
     headers: {
-      'x-custom-request-header': 'want http/1'
+      'x-custom-request-header': 'want 1.1'
     },
     ca,
     servername: 'agent1'
@@ -121,8 +113,11 @@ test('Should upgrade to HTTP/2 when HTTPS/1 is available', async (t) => {
   })
 
   t.equal(httpsResponse.statusCode, 200)
-  t.equal(httpsResponse.headers['content-type'], 'text/plain; charset=utf-8')
-  t.equal(httpsResponse.headers['x-custom-request-header'], 'want http/1')
-  t.equal(httpsResponse.headers['x-custom-response-header'], 'using http/1')
-  t.equal(Buffer.concat(httpsBody).toString('utf8'), 'hello http/1')
+  t.equal(httpsResponse.headers['content-type'], 'application/json; charset=utf-8')
+  t.equal(httpsResponse.headers['x-custom-request-header'], 'want 1.1')
+  t.equal(httpsResponse.headers['x-custom-response-header'], 'using 1.1')
+  t.equal(Buffer.concat(httpsBody).toString('utf8'), JSON.stringify({
+    alpnProtocol: false,
+    httpVersion: '1.1'
+  }))
 })
