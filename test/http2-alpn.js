@@ -1,61 +1,75 @@
 'use strict'
 
+const https = require('node:https')
 const { once } = require('node:events')
-const fastify = require('fastify')
-
+const { createSecureServer } = require('node:http2')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
 const { test } = require('tap')
-const pem = require('https-pem')
 
 const { Client } = require('..')
 
-test('Should support secure HTTPS connection', async (t) => {
-  t.plan(5)
+// get the crypto fixtures
+const key = readFileSync(join(__dirname, 'fixtures', 'key.pem'), 'utf8')
+const cert = readFileSync(join(__dirname, 'fixtures', 'cert.pem'), 'utf8')
+const ca = readFileSync(join(__dirname, 'fixtures', 'ca.pem'), 'utf8')
+
+test('Should upgrade to HTTP/2 when HTTPS/1 is available for GET', async (t) => {
+  t.plan(10)
 
   const body = []
-  const server = fastify({
-    http2: false,
-    https: {
-      allowHTTP1: false,
-      key: pem.key,
-      cert: pem.cert
+  const httpsBody = []
+
+  // create the server and server stream handler
+  const server = createSecureServer(
+    {
+      key,
+      cert,
+      allowHTTP1: true
+    },
+    (req, res) => {
+      const { socket: { alpnProtocol } } = req.httpVersion === '2.0' ? req.stream.session : req
+
+      // handle http/1 requests
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'x-custom-request-header': req.headers['x-custom-request-header'] || '',
+        'x-custom-response-header': `using ${req.httpVersion}`
+      })
+      res.end(JSON.stringify({
+        alpnProtocol,
+        httpVersion: req.httpVersion
+      }))
     }
-  }, (err) => {
-    t.error(err)
-    t.teardown(() => {
-      server.close()
-    })
-  })
+  )
 
-  // this route can only be accessed over https
-  server.get('/', (req, res) => {
-    t.type(req.raw, 'IncomingMessage')
-    t.type(res.raw, 'ServerResponse')
+  server.listen(0)
+  await once(server, 'listening')
 
-    res.code(200).send({ hello: 'world' })
-  })
+  // close the server on teardown
+  t.teardown(server.close.bind(server))
 
-  await server.listen({
-    port: 0
-  })
+  // set the port
+  const port = server.address().port
 
-  const port = server.addresses()[0].port
-
+  // test undici against http/2
   const client = new Client(`https://localhost:${port}`, {
     connect: {
-      rejectUnauthorized: false
+      ca,
+      servername: 'agent1'
     }
   })
 
-  // attach the client and server to teardown in this specific order otherwise the teardown will hang
-  // maybe this behavior is a bug?
+  // close the client on teardown
   t.teardown(client.close.bind(client))
-  t.teardown(() => {
-    server.close()
-  })
 
+  // make an undici request using where it wants http/2
   const response = await client.request({
     path: '/',
-    method: 'GET'
+    method: 'GET',
+    headers: {
+      'x-custom-request-header': 'want 2.0'
+    }
   })
 
   response.body.on('data', chunk => {
@@ -66,66 +80,196 @@ test('Should support secure HTTPS connection', async (t) => {
 
   t.equal(response.statusCode, 200)
   t.equal(response.headers['content-type'], 'application/json; charset=utf-8')
-  t.equal(Buffer.concat(body).toString('utf8'), '{"hello":"world"}')
+  t.equal(response.headers['x-custom-request-header'], 'want 2.0')
+  t.equal(response.headers['x-custom-response-header'], 'using 2.0')
+  t.equal(Buffer.concat(body).toString('utf8'), JSON.stringify({
+    alpnProtocol: 'h2',
+    httpVersion: '2.0'
+  }))
+
+  // make an https request for http/1 to confirm undici is using http/2
+  const httpsOptions = {
+    ca,
+    servername: 'agent1',
+    headers: {
+      'x-custom-request-header': 'want 1.1'
+    }
+  }
+
+  const httpsResponse = await new Promise((resolve, reject) => {
+    const httpsRequest = https.get(`https://localhost:${port}/`, httpsOptions, (res) => {
+      res.on('data', (chunk) => {
+        httpsBody.push(chunk)
+      })
+
+      res.on('end', () => {
+        resolve(res)
+      })
+    }).on('error', (err) => {
+      reject(err)
+    })
+
+    t.teardown(httpsRequest.destroy.bind(httpsRequest))
+  })
+
+  t.equal(httpsResponse.statusCode, 200)
+  t.equal(httpsResponse.headers['content-type'], 'application/json; charset=utf-8')
+  t.equal(httpsResponse.headers['x-custom-request-header'], 'want 1.1')
+  t.equal(httpsResponse.headers['x-custom-response-header'], 'using 1.1')
+  t.equal(Buffer.concat(httpsBody).toString('utf8'), JSON.stringify({
+    alpnProtocol: false,
+    httpVersion: '1.1'
+  }))
 })
 
-test('Should support secure H2 connection using ALPN', async (t) => {
-  t.plan(5)
+test('Should upgrade to HTTP/2 when HTTPS/1 is available for POST', async (t) => {
+  t.plan(15)
 
-  const body = []
-  const server = fastify({
-    http2: true,
-    https: {
-      allowHTTP1: false, // fallback support for HTTP1
-      key: pem.key,
-      cert: pem.cert
+  const requestChunks = []
+  const responseBody = []
+
+  const httpsRequestChunks = []
+  const httpsResponseBody = []
+
+  const expectedBody = 'hello'
+  const buf = Buffer.from(expectedBody)
+  const body = new ArrayBuffer(buf.byteLength)
+
+  buf.copy(new Uint8Array(body))
+
+  // create the server and server stream handler
+  const server = createSecureServer(
+    {
+      key,
+      cert,
+      allowHTTP1: true
+    },
+    (req, res) => {
+      // use the stream handler for http2
+      if (req.httpVersion === '2.0') {
+        return
+      }
+
+      const { socket: { alpnProtocol } } = req
+
+      req.on('data', (chunk) => {
+        httpsRequestChunks.push(chunk)
+      })
+
+      req.on('end', () => {
+        // handle http/1 requests
+        res.writeHead(201, {
+          'content-type': 'text/plain; charset=utf-8',
+          'x-custom-request-header': req.headers['x-custom-request-header'] || '',
+          'x-custom-alpn-protocol': alpnProtocol
+        })
+        res.end('hello http/1!')
+      })
     }
-  }, (err) => {
-    t.error(err)
-    t.teardown(() => {
-      server.close()
+  )
+
+  server.on('stream', (stream, headers) => {
+    t.equal(headers[':method'], 'POST')
+    t.equal(headers[':path'], '/')
+    t.equal(headers[':scheme'], 'https')
+
+    const { socket: { alpnProtocol } } = stream.session
+
+    stream.on('data', (chunk) => {
+      requestChunks.push(chunk)
     })
+
+    stream.respond({
+      ':status': 201,
+      'content-type': 'text/plain; charset=utf-8',
+      'x-custom-request-header': headers['x-custom-request-header'] || '',
+      'x-custom-alpn-protocol': alpnProtocol
+    })
+
+    stream.end('hello h2!')
   })
 
-  // this route can be accessed through both protocols
-  server.get('/', (req, res) => {
-    t.type(req.raw, 'Http2ServerRequest')
-    t.type(res.raw, 'Http2ServerResponse')
+  server.listen(0)
+  await once(server, 'listening')
 
-    res.code(200).send({ hello: 'world' })
-  })
+  // close the server on teardown
+  t.teardown(server.close.bind(server))
 
-  await server.listen({
-    port: 0
-  })
+  // set the port
+  const port = server.address().port
 
-  const port = server.addresses()[0].port
-
+  // test undici against http/2
   const client = new Client(`https://localhost:${port}`, {
     connect: {
-      rejectUnauthorized: false
+      ca,
+      servername: 'agent1'
     }
   })
 
-  // attach the client and server to teardown in this specific order otherwise the teardown will hang
-  // maybe this behavior is a bug?
+  // close the client on teardown
   t.teardown(client.close.bind(client))
-  t.teardown(() => {
-    server.close()
-  })
 
+  // make an undici request using where it wants http/2
   const response = await client.request({
     path: '/',
-    method: 'GET'
+    method: 'POST',
+    headers: {
+      'x-custom-request-header': 'want 2.0'
+    },
+    body
   })
 
-  response.body.on('data', chunk => {
-    body.push(chunk)
+  response.body.on('data', (chunk) => {
+    responseBody.push(chunk)
   })
 
   await once(response.body, 'end')
 
-  t.equal(response.statusCode, 200)
-  t.equal(response.headers['content-type'], 'application/json; charset=utf-8')
-  t.equal(Buffer.concat(body).toString('utf8'), '{"hello":"world"}')
+  t.equal(response.statusCode, 201)
+  t.equal(response.headers['content-type'], 'text/plain; charset=utf-8')
+  t.equal(response.headers['x-custom-request-header'], 'want 2.0')
+  t.equal(response.headers['x-custom-alpn-protocol'], 'h2')
+  t.equal(Buffer.concat(responseBody).toString('utf-8'), 'hello h2!')
+  t.equal(Buffer.concat(requestChunks).toString('utf-8'), expectedBody)
+
+  // make an https request for http/1 to confirm undici is using http/2
+  const httpsOptions = {
+    ca,
+    servername: 'agent1',
+    method: 'POST',
+    headers: {
+      'content-type': 'text/plain; charset=utf-8',
+      'content-length': Buffer.byteLength(body),
+      'x-custom-request-header': 'want 1.1'
+    }
+  }
+
+  const httpsResponse = await new Promise((resolve, reject) => {
+    const httpsRequest = https.request(`https://localhost:${port}/`, httpsOptions, (res) => {
+      res.on('data', (chunk) => {
+        httpsResponseBody.push(chunk)
+      })
+
+      res.on('end', () => {
+        resolve(res)
+      })
+    }).on('error', (err) => {
+      reject(err)
+    })
+
+    httpsRequest.on('error', (err) => {
+      reject(err)
+    })
+
+    httpsRequest.write(Buffer.from(body))
+
+    t.teardown(httpsRequest.destroy.bind(httpsRequest))
+  })
+
+  t.equal(httpsResponse.statusCode, 201)
+  t.equal(httpsResponse.headers['content-type'], 'text/plain; charset=utf-8')
+  t.equal(httpsResponse.headers['x-custom-request-header'], 'want 1.1')
+  t.equal(httpsResponse.headers['x-custom-alpn-protocol'], 'false')
+  t.equal(Buffer.concat(httpsResponseBody).toString('utf-8'), 'hello http/1!')
+  t.equal(Buffer.concat(httpsRequestChunks).toString('utf-8'), expectedBody)
 })
