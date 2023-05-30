@@ -1,11 +1,13 @@
 'use strict'
 
-const { unlinkSync } = require('fs')
+const { unlinkSync, readFileSync } = require('fs')
+const { createServer } = require('https')
 const os = require('os')
 const path = require('path')
 const cluster = require('cluster')
-const fastify = require('fastify')
-const pem = require('https-pem')
+
+const key = readFileSync(path.join(__dirname, '..', 'test', 'fixtures', 'key.pem'), 'utf8')
+const cert = readFileSync(path.join(__dirname, '..', 'test', 'fixtures', 'cert.pem'), 'utf8')
 
 const socketPath = path.join(os.tmpdir(), 'undici.sock')
 
@@ -25,45 +27,15 @@ if (cluster.isPrimary) {
   }
 } else {
   const buf = Buffer.alloc(64 * 1024, '_')
-  // const server = createSecureServer({
-  //   ...pem
-  // }, (req, res) => {
-  //   setTimeout(() => {
-  //     // console.log('responding')
-  //     res.end(buf)
-  //   }, timeout)
-  // }).listen(port)
-
-  // const server = createSecureServer(pem);
-
-  // server.on('stream', (stream, headers) => {
-  //   setTimeout(() => {
-  //     // stream.respond({
-  //     //   'content-type': 'text/plain; charset=utf-8',
-  //     //   ':status': 200
-  //     // })
-
-  //     stream.end(buf)
-  //   }, timeout)
-  // })
-
-  // server.listen(port)
-
-  const server = fastify({
-    http2: false,
-    https: {
-      allowHTTP1: false,
-      key: pem.key,
-      cert: pem.cert
-    },
+  const server = createServer({
+    key,
+    cert,
     keepAliveTimeout: 600e3
+  }, (req, res) => {
+    setTimeout(() => {
+      res.end(buf)
+    }, timeout)
   })
 
-  // this route can only be accessed over https
-  server.get('/', (req, res) => {
-    // res.end(buf)
-    res.reply(200).send(buf)
-  })
-
-  server.listen({ port })
+  server.listen(port)
 }

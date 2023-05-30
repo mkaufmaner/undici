@@ -3,12 +3,16 @@
 const https = require('https')
 const os = require('os')
 const path = require('path')
+const { readFileSync } = require('fs')
 const { table } = require('table')
 const { Writable } = require('stream')
 const { WritableStream } = require('stream/web')
 const { isMainThread } = require('worker_threads')
 
 const { Pool, Client, fetch, Agent, setGlobalDispatcher } = require('..')
+
+const ca = readFileSync(path.join(__dirname, '..', 'test', 'fixtures', 'ca.pem'), 'utf8')
+const servername = 'agent1'
 
 const iterations = (parseInt(process.env.SAMPLES, 10) || 10) + 1
 const errorThreshold = parseInt(process.env.ERROR_TRESHOLD, 10) || 3
@@ -27,7 +31,9 @@ if (process.env.PORT) {
   dest.socketPath = path.join(os.tmpdir(), 'undici.sock')
 }
 
-const httpBaseOptions = {
+const httpsBaseOptions = {
+  ca,
+  servername,
   protocol: 'https:',
   hostname: 'localhost',
   method: 'GET',
@@ -43,21 +49,25 @@ const httpBaseOptions = {
   ...dest
 }
 
-const httpNoKeepAliveOptions = {
-  ...httpBaseOptions,
+const httpsNoKeepAliveOptions = {
+  ...httpsBaseOptions,
   agent: new https.Agent({
     keepAlive: false,
     maxSockets: connections,
-    rejectUnauthorized: false
+    // rejectUnauthorized: false,
+    ca,
+    servername
   })
 }
 
-const httpKeepAliveOptions = {
-  ...httpBaseOptions,
+const httpsKeepAliveOptions = {
+  ...httpsBaseOptions,
   agent: new https.Agent({
     keepAlive: true,
     maxSockets: connections,
-    rejectUnauthorized: false
+    // rejectUnauthorized: false,
+    ca,
+    servername
   })
 }
 
@@ -69,11 +79,13 @@ const undiciOptions = {
 }
 
 const Class = connections > 1 ? Pool : Client
-const dispatcher = new Class(httpBaseOptions.url, {
+const dispatcher = new Class(httpsBaseOptions.url, {
   pipelining,
   connections,
   connect: {
-    rejectUnauthorized: false
+    // rejectUnauthorized: false,
+    ca,
+    servername
   },
   ...dest
 })
@@ -82,43 +94,45 @@ setGlobalDispatcher(new Agent({
   pipelining,
   connections,
   connect: {
-    rejectUnauthorized: false
+    // rejectUnauthorized: false,
+    ca,
+    servername
   }
 }))
 
 class SimpleRequest {
-  constructor(resolve) {
+  constructor (resolve) {
     this.dst = new Writable({
-      write(chunk, encoding, callback) {
+      write (chunk, encoding, callback) {
         callback()
       }
     }).on('finish', resolve)
   }
 
-  onConnect(abort) { }
+  onConnect (abort) { }
 
-  onHeaders(statusCode, headers, resume) {
+  onHeaders (statusCode, headers, resume) {
     this.dst.on('drain', resume)
   }
 
-  onData(chunk) {
+  onData (chunk) {
     return this.dst.write(chunk)
   }
 
-  onComplete() {
+  onComplete () {
     this.dst.end()
   }
 
-  onError(err) {
+  onError (err) {
     throw err
   }
 }
 
-function makeParallelRequests(cb) {
+function makeParallelRequests (cb) {
   return Promise.all(Array.from(Array(parallelRequests)).map(() => new Promise(cb)))
 }
 
-function printResults(results) {
+function printResults (results) {
   // Sort results by least performant first, then compare relative performances and also printing padding
   let last
 
@@ -184,13 +198,13 @@ function printResults(results) {
 }
 
 const experiments = {
-  'https - no keepalive'() {
+  'https - no keepalive' () {
     return makeParallelRequests(resolve => {
-      https.get(httpNoKeepAliveOptions, res => {
+      https.get(httpsNoKeepAliveOptions, res => {
         res
           .pipe(
             new Writable({
-              write(chunk, encoding, callback) {
+              write (chunk, encoding, callback) {
                 callback()
               }
             })
@@ -199,13 +213,13 @@ const experiments = {
       })
     })
   },
-  'https - keepalive'() {
+  'https - keepalive' () {
     return makeParallelRequests(resolve => {
-      https.get(httpKeepAliveOptions, res => {
+      https.get(httpsKeepAliveOptions, res => {
         res
           .pipe(
             new Writable({
-              write(chunk, encoding, callback) {
+              write (chunk, encoding, callback) {
                 callback()
               }
             })
@@ -214,7 +228,7 @@ const experiments = {
       })
     })
   },
-  'undici - pipeline'() {
+  'undici - pipeline' () {
     return makeParallelRequests(resolve => {
       dispatcher
         .pipeline(undiciOptions, data => {
@@ -223,7 +237,7 @@ const experiments = {
         .end()
         .pipe(
           new Writable({
-            write(chunk, encoding, callback) {
+            write (chunk, encoding, callback) {
               callback()
             }
           })
@@ -231,13 +245,13 @@ const experiments = {
         .on('finish', resolve)
     })
   },
-  'undici - request'() {
+  'undici - request' () {
     return makeParallelRequests(resolve => {
       dispatcher.request(undiciOptions).then(({ body }) => {
         body
           .pipe(
             new Writable({
-              write(chunk, encoding, callback) {
+              write (chunk, encoding, callback) {
                 callback()
               }
             })
@@ -246,12 +260,12 @@ const experiments = {
       })
     })
   },
-  'undici - stream'() {
+  'undici - stream' () {
     return makeParallelRequests(resolve => {
       return dispatcher
         .stream(undiciOptions, () => {
           return new Writable({
-            write(chunk, encoding, callback) {
+            write (chunk, encoding, callback) {
               callback()
             }
           })
@@ -259,7 +273,7 @@ const experiments = {
         .then(resolve)
     })
   },
-  'undici - dispatch'() {
+  'undici - dispatch' () {
     return makeParallelRequests(resolve => {
       dispatcher.dispatch(undiciOptions, new SimpleRequest(resolve))
     })
@@ -271,13 +285,13 @@ if (process.env.PORT) {
   experiments['undici - fetch'] = () => {
     return makeParallelRequests(resolve => {
       fetch(dest.url, {}).then(res => {
-        res.body.pipeTo(new WritableStream({ write() { }, close() { resolve() } }))
+        res.body.pipeTo(new WritableStream({ write () { }, close () { resolve() } }))
       }).catch(console.log)
     })
   }
 }
 
-async function main() {
+async function main () {
   const { cronometro } = await import('cronometro')
 
   cronometro(
