@@ -64,6 +64,7 @@ const undiciOptions = {
 
 const Class = connections > 1 ? Pool : Client
 const dispatcher = new Class(httpsBaseOptions.url, {
+  allowH2: true,
   pipelining,
   connections,
   connect: {
@@ -75,6 +76,7 @@ const dispatcher = new Class(httpsBaseOptions.url, {
 })
 
 setGlobalDispatcher(new Agent({
+  allowH2: true,
   pipelining,
   connections,
   connect: {
@@ -113,11 +115,11 @@ setGlobalDispatcher(new Agent({
 //   }
 // }
 
-function makeParallelRequests (cb) {
+function makeParallelRequests(cb) {
   return Promise.all(Array.from(Array(parallelRequests)).map(() => new Promise(cb)))
 }
 
-function printResults (results) {
+function printResults(results) {
   // Sort results by least performant first, then compare relative performances and also printing padding
   let last
 
@@ -183,7 +185,7 @@ function printResults (results) {
 }
 
 const experiments = {
-  'http2 - request' () {
+  'http2 - request'() {
     return makeParallelRequests(resolve => {
       connect(dest.url, http2ClientOptions, (session) => {
         const headers = {
@@ -197,7 +199,7 @@ const experiments = {
 
         request.pipe(
           new Writable({
-            write (chunk, encoding, callback) {
+            write(chunk, encoding, callback) {
               callback()
             }
           })
@@ -205,7 +207,7 @@ const experiments = {
       })
     })
   },
-  'undici - pipeline' () {
+  'undici - pipeline'() {
     return makeParallelRequests(resolve => {
       dispatcher
         .pipeline(undiciOptions, data => {
@@ -214,7 +216,7 @@ const experiments = {
         .end()
         .pipe(
           new Writable({
-            write (chunk, encoding, callback) {
+            write(chunk, encoding, callback) {
               callback()
             }
           })
@@ -222,7 +224,7 @@ const experiments = {
         .on('finish', resolve)
     })
   },
-  'undici - request' () {
+  'undici - request'() {
     // console.log('undici - request')
     // let requestCount = 0;
     return makeParallelRequests(resolve => {
@@ -234,7 +236,7 @@ const experiments = {
           body
             .pipe(
               new Writable({
-                write (chunk, encoding, callback) {
+                write(chunk, encoding, callback) {
                   // console.log('undici - request - dispatcher.request - body - pipe - Writeable - chunk', chunk)
                   callback()
                 }
@@ -253,12 +255,12 @@ const experiments = {
       }
     })
   },
-  'undici - stream' () {
+  'undici - stream'() {
     return makeParallelRequests(resolve => {
       return dispatcher
         .stream(undiciOptions, () => {
           return new Writable({
-            write (chunk, encoding, callback) {
+            write(chunk, encoding, callback) {
               callback()
             }
           })
@@ -279,13 +281,13 @@ if (process.env.PORT) {
   experiments['undici - fetch'] = () => {
     return makeParallelRequests(resolve => {
       fetch(dest.url, {}).then(res => {
-        res.body.pipeTo(new WritableStream({ write () { }, close () { resolve() } }))
+        res.body.pipeTo(new WritableStream({ write() { }, close() { resolve() } }))
       }).catch(console.log)
     })
   }
 }
 
-async function main () {
+async function main() {
   const { cronometro } = await import('cronometro')
 
   cronometro(
