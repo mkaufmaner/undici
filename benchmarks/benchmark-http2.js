@@ -88,38 +88,38 @@ setGlobalDispatcher(new Agent({
 
 // @TODO: fix this for the dispatcher
 class SimpleRequest {
-  constructor(resolve) {
+  constructor (resolve) {
     this.dst = new Writable({
-      write(chunk, encoding, callback) {
+      write (chunk, encoding, callback) {
         callback()
       }
     }).on('finish', resolve)
   }
 
-  onConnect(abort) { }
+  onConnect (abort) { }
 
-  onHeaders(statusCode, headers, resume) {
+  onHeaders (statusCode, headers, resume) {
     this.dst.on('drain', resume)
   }
 
-  onData(chunk) {
+  onData (chunk) {
     return this.dst.write(chunk)
   }
 
-  onComplete() {
+  onComplete () {
     this.dst.end()
   }
 
-  onError(err) {
+  onError (err) {
     throw err
   }
 }
 
-function makeParallelRequests(cb) {
+function makeParallelRequests (cb) {
   return Promise.all(Array.from(Array(parallelRequests)).map(() => new Promise(cb)))
 }
 
-function printResults(results) {
+function printResults (results) {
   // Sort results by least performant first, then compare relative performances and also printing padding
   let last
 
@@ -185,7 +185,7 @@ function printResults(results) {
 }
 
 const experiments = {
-  'http2 - request'() {
+  'http2 - request' () {
     return makeParallelRequests(resolve => {
       connect(dest.url, http2ClientOptions, (session) => {
         const headers = {
@@ -199,7 +199,7 @@ const experiments = {
 
         request.pipe(
           new Writable({
-            write(chunk, encoding, callback) {
+            write (chunk, encoding, callback) {
               callback()
             }
           })
@@ -207,7 +207,7 @@ const experiments = {
       })
     })
   },
-  'undici - pipeline'() {
+  'undici - pipeline' () {
     return makeParallelRequests(resolve => {
       dispatcher
         .pipeline(undiciOptions, data => {
@@ -216,7 +216,7 @@ const experiments = {
         .end()
         .pipe(
           new Writable({
-            write(chunk, encoding, callback) {
+            write (chunk, encoding, callback) {
               callback()
             }
           })
@@ -224,7 +224,7 @@ const experiments = {
         .on('finish', resolve)
     })
   },
-  'undici - request'() {
+  'undici - request' () {
     // console.log('undici - request')
     // let requestCount = 0;
     return makeParallelRequests(resolve => {
@@ -236,7 +236,7 @@ const experiments = {
           body
             .pipe(
               new Writable({
-                write(chunk, encoding, callback) {
+                write (chunk, encoding, callback) {
                   // console.log('undici - request - dispatcher.request - body - pipe - Writeable - chunk', chunk)
                   callback()
                 }
@@ -255,12 +255,12 @@ const experiments = {
       }
     })
   },
-  'undici - stream'() {
+  'undici - stream' () {
     return makeParallelRequests(resolve => {
       return dispatcher
         .stream(undiciOptions, () => {
           return new Writable({
-            write(chunk, encoding, callback) {
+            write (chunk, encoding, callback) {
               callback()
             }
           })
@@ -269,7 +269,7 @@ const experiments = {
     })
   },
   // @TODO: this is not working
-  'undici - dispatch'() {
+  'undici - dispatch' () {
     return makeParallelRequests(resolve => {
       dispatcher.dispatch(undiciOptions, new SimpleRequest(resolve))
     })
@@ -281,13 +281,13 @@ if (process.env.PORT) {
   experiments['undici - fetch'] = () => {
     return makeParallelRequests(resolve => {
       fetch(dest.url, {}).then(res => {
-        res.body.pipeTo(new WritableStream({ write() { }, close() { resolve() } }))
+        res.body.pipeTo(new WritableStream({ write () { }, close () { resolve() } }))
       }).catch(console.log)
     })
   }
 }
 
-async function main() {
+async function main () {
   const { cronometro } = await import('cronometro')
 
   cronometro(
