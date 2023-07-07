@@ -87,33 +87,33 @@ setGlobalDispatcher(new Agent({
 }))
 
 // @TODO: fix this for the dispatcher
-// class SimpleRequest {
-//   constructor(resolve) {
-//     this.dst = new Writable({
-//       write(chunk, encoding, callback) {
-//         callback()
-//       }
-//     }).on('finish', resolve)
-//   }
+class SimpleRequest {
+  constructor(resolve) {
+    this.dst = new Writable({
+      write(chunk, encoding, callback) {
+        callback()
+      }
+    }).on('finish', resolve)
+  }
 
-//   onConnect(abort) { }
+  onConnect(abort) { }
 
-//   onHeaders(statusCode, headers, resume) {
-//     this.dst.on('drain', resume)
-//   }
+  onHeaders(statusCode, headers, resume) {
+    this.dst.on('drain', resume)
+  }
 
-//   onData(chunk) {
-//     return this.dst.write(chunk)
-//   }
+  onData(chunk) {
+    return this.dst.write(chunk)
+  }
 
-//   onComplete() {
-//     this.dst.end()
-//   }
+  onComplete() {
+    this.dst.end()
+  }
 
-//   onError(err) {
-//     throw err
-//   }
-// }
+  onError(err) {
+    throw err
+  }
+}
 
 function makeParallelRequests(cb) {
   return Promise.all(Array.from(Array(parallelRequests)).map(() => new Promise(cb)))
@@ -267,13 +267,13 @@ const experiments = {
         })
         .then(resolve)
     })
-  }
+  },
   // @TODO: this is not working
-  // 'undici - dispatch'() {
-  //   return makeParallelRequests(resolve => {
-  //     dispatcher.dispatch(undiciOptions, new SimpleRequest(resolve))
-  //   })
-  // }
+  'undici - dispatch'() {
+    return makeParallelRequests(resolve => {
+      dispatcher.dispatch(undiciOptions, new SimpleRequest(resolve))
+    })
+  }
 }
 
 if (process.env.PORT) {
