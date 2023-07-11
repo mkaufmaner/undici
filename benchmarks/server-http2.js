@@ -34,48 +34,14 @@ if (cluster.isPrimary) {
       key,
       cert,
       allowHTTP1: true,
-      sessionTimeout,
-      settings: {
-        // maxFrameSize: 1024 * 1024 * 32
-      }
+      sessionTimeout
     },
     (req, res) => {
-      // if (req.httpVersion === '2.0') {
-      //   return
-      // }
-
       setTimeout(() => {
-        // res.send(buf)
-        // res.end()
         res.end(buf)
       }, timeout)
     }
   )
-
-  // let streamErrorCount = 0;
-
-  // server.on('stream', (stream) => {
-  //   stream.on('error', (error) => {
-  //     streamErrorCount++;
-  //     console.error('http/2 stream error', error)
-  //     console.error('http/2 stream error count', streamErrorCount)
-  //   });
-
-  //   stream.respond({
-  //     ':status': 200
-  //   });
-
-  //   setTimeout(() => {
-  //     stream.end(buf)
-  //   }, timeout)
-  // })
-
-  // server.on('session', (session) => {
-  //   session.setTimeout(sessionTimeout, function () {
-  //     console.error('http/2 session timeout')
-  //     this.close()
-  //   })
-  // })
 
   server.keepAliveTimeout = 600e3
 
