@@ -224,19 +224,13 @@ const experiments = {
     })
   },
   'undici - request'() {
-    // console.log('undici - request')
-    // let requestCount = 0;
     return makeParallelRequests(resolve => {
       try {
-        // console.log('undici - request - dispatcher.request')
         dispatcher.request(undiciOptions).then(({ body }) => {
-          // requestCount++;
-          // console.log('undici - request - dispatcher.request - requestCount', requestCount)
           body
             .pipe(
               new Writable({
                 write(chunk, encoding, callback) {
-                  // console.log('undici - request - dispatcher.request - body - pipe - Writeable - chunk', chunk)
                   callback()
                 }
               })
@@ -245,7 +239,6 @@ const experiments = {
               console.log('undici - request - dispatcher.request - body - error', err)
             })
             .on('finish', () => {
-              // console.log('undici - request - dispatcher.request - body - finish')
               resolve()
             })
         })
